@@ -22,6 +22,7 @@
 #include <sys/ioctl.h>
 #include <linux/fs.h>
 #include <errno.h>
+#include <tuple>  
 
 // Only define APPLICATION_ID if not already defined
 #ifndef APPLICATION_ID
@@ -158,16 +159,47 @@ static std::vector<std::string> GetDiskInfo() {
 }
 
 // Function to send progress updates to Flutter
+// static void SendProgressUpdate(int pass, int progress, const std::string& status) {
+//     if (!g_method_channel) return;
+    
+//     g_autoptr(FlValue) result = fl_value_new_map();
+//     fl_value_set_string_take(result, "pass", fl_value_new_int(pass));
+//     fl_value_set_string_take(result, "progress", fl_value_new_int(progress));
+//     fl_value_set_string_take(result, "status", fl_value_new_string(status.c_str()));
+    
+//     fl_method_channel_invoke_method(g_method_channel, "onWipeProgress", result, nullptr, nullptr, nullptr);
+// }
 static void SendProgressUpdate(int pass, int progress, const std::string& status) {
     if (!g_method_channel) return;
-    
-    g_autoptr(FlValue) result = fl_value_new_map();
-    fl_value_set_string_take(result, "pass", fl_value_new_int(pass));
-    fl_value_set_string_take(result, "progress", fl_value_new_int(progress));
-    fl_value_set_string_take(result, "status", fl_value_new_string(status.c_str()));
-    
-    fl_method_channel_invoke_method(g_method_channel, "onWipeProgress", result, nullptr, nullptr, nullptr);
+
+    // Run on the main Flutter/GTK thread
+    g_main_context_invoke(nullptr, [](gpointer data) -> gboolean {
+        auto* msg = static_cast<std::tuple<int,int,std::string>*>(data);
+        int pass = std::get<0>(*msg);
+        int progress = std::get<1>(*msg);
+        std::string status = std::get<2>(*msg);
+        delete msg;
+
+        g_autoptr(FlValue) result = fl_value_new_map();
+        fl_value_set_string_take(result, "pass", fl_value_new_int(pass));
+        fl_value_set_string_take(result, "progress", fl_value_new_int(progress));
+        fl_value_set_string_take(result, "status", fl_value_new_string(status.c_str()));
+
+        fl_method_channel_invoke_method(
+            g_method_channel,
+            "onWipeProgress",
+            result,
+            nullptr,
+            nullptr,
+            nullptr
+        );
+
+        return FALSE;
+    },
+    new std::tuple<int,int,std::string>(pass, progress, status));
+
 }
+
 
 // DoD 5220.22-M Pass 1: Write zeros
 static bool OverwriteWithZeros(int fd, uint64_t size) {
@@ -282,78 +314,216 @@ static bool OverwriteWithRandom(int fd, uint64_t size) {
 }
 
 // NEW FUNCTION: Create a new filesystem after wiping
+// static bool CreateNewFileSystem(const std::string& device_path) {
+//     SendProgressUpdate(5, 0, "Creating new partition table...");
+    
+//     // Create a new GPT partition table
+//     std::string parted_cmd = "parted -s " + device_path + " mklabel gpt";
+//     int result = system(parted_cmd.c_str());
+//     if (result != 0) {
+//         SendProgressUpdate(5, 0, "Warning: Failed to create GPT table, trying MBR...");
+//         // Try MBR if GPT fails
+//         parted_cmd = "parted -s " + device_path + " mklabel msdos";
+//         result = system(parted_cmd.c_str());
+//         if (result != 0) {
+//             SendProgressUpdate(5, 0, "Error: Failed to create partition table");
+//             return false;
+//         }
+//     }
+    
+//     SendProgressUpdate(5, 25, "Partition table created successfully");
+    
+//     // Create a primary partition using all available space
+//     SendProgressUpdate(5, 30, "Creating primary partition...");
+//     parted_cmd = "parted -s " + device_path + " mkpart primary 1MiB 100%";
+//     result = system(parted_cmd.c_str());
+//     if (result != 0) {
+//         SendProgressUpdate(5, 0, "Error: Failed to create primary partition");
+//         return false;
+//     }
+    
+//     SendProgressUpdate(5, 50, "Primary partition created");
+    
+//     // Wait a moment for the kernel to recognize the new partition
+//     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    
+//     // Force kernel to re-read partition table
+//     std::string partprobe_cmd = "partprobe " + device_path;
+//     system(partprobe_cmd.c_str());
+//     std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    
+//     // Determine the partition device path (e.g., /dev/sda1)
+//     std::string partition_path = device_path;
+//     if (device_path.back() >= '0' && device_path.back() <= '9') {
+//         partition_path += "p1";  // For devices like /dev/nvme0n1 -> /dev/nvme0n1p1
+//     } else {
+//         partition_path += "1";   // For devices like /dev/sda -> /dev/sda1
+//     }
+    
+//     // Format with FAT32 filesystem (compatible with most systems)
+//     SendProgressUpdate(5, 60, "Formatting with FAT32 filesystem...");
+//     std::string mkfs_cmd = "mkfs.fat -F 32 -n \"CLEAN_DISK\" " + partition_path + " 2>/dev/null";
+//     result = system(mkfs_cmd.c_str());
+    
+//     if (result != 0) {
+//         // If FAT32 fails, try ext4
+//         SendProgressUpdate(5, 70, "FAT32 failed, trying ext4 filesystem...");
+//         mkfs_cmd = "mkfs.ext4 -F -L \"CLEAN_DISK\" " + partition_path + " 2>/dev/null";
+//         result = system(mkfs_cmd.c_str());
+        
+//         if (result != 0) {
+//             SendProgressUpdate(5, 0, "Error: Failed to format partition");
+//             return false;
+//         }
+//         SendProgressUpdate(5, 90, "ext4 filesystem created successfully");
+//     } else {
+//         SendProgressUpdate(5, 90, "FAT32 filesystem created successfully");
+//     }
+    
+//     // Final partition table update
+//     system(("partprobe " + device_path + " 2>/dev/null").c_str());
+    
+//     SendProgressUpdate(5, 100, "New filesystem created - disk is ready to use!");
+//     return true;
+// }
+// NEW FUNCTION: Create a new NTFS filesystem after wiping
+// NEW FUNCTION: NTFS first, fallback to FAT32 only (Label = Code_wipe)
+// static bool CreateNewFileSystem(const std::string& device_path) {
+//     SendProgressUpdate(5, 0, "Creating new partition table...");
+
+//     // 1. Create GPT (fallback to MBR)
+//     std::string parted_cmd = "parted -s " + device_path + " mklabel gpt";
+//     int result = system(parted_cmd.c_str());
+
+//     if (result != 0) {
+//         SendProgressUpdate(5, 0, "GPT failed. Trying MBR...");
+//         parted_cmd = "parted -s " + device_path + " mklabel msdos";
+//         result = system(parted_cmd.c_str());
+
+//         if (result != 0) {
+//             SendProgressUpdate(5, 0, "ERROR: Cannot create partition table");
+//             return false;
+//         }
+//     }
+
+//     SendProgressUpdate(5, 25, "Partition table created");
+
+//     // 2. Create primary partition
+//     SendProgressUpdate(5, 30, "Creating primary partition...");
+//     parted_cmd = "parted -s " + device_path + " mkpart primary 1MiB 100%";
+//     result = system(parted_cmd.c_str());
+
+//     if (result != 0) {
+//         SendProgressUpdate(5, 0, "ERROR: Cannot create primary partition");
+//         return false;
+//     }
+
+//     SendProgressUpdate(5, 50, "Primary partition created");
+
+//     // Wait for kernel
+//     std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+//     system(("partprobe " + device_path).c_str());
+//     std::this_thread::sleep_for(std::chrono::milliseconds(800));
+
+//     // 3. Detect correct partition path
+//     std::string partition_path = device_path;
+
+//     if (device_path.back() >= '0' && device_path.back() <= '9') {
+//         partition_path += "p1";   // NVMe
+//     } else {
+//         partition_path += "1";    // SATA / USB
+//     }
+
+//     // 4. Format as NTFS (primary)
+//     SendProgressUpdate(5, 60, "Formatting as NTFS (Label: Code_wipe)...");
+
+//     std::string mkfs_cmd = "mkfs.ntfs -F -f -L \"Code_wipe\" " + partition_path + " 2>/dev/null";
+//     result = system(mkfs_cmd.c_str());
+
+//     if (result == 0) {
+//         SendProgressUpdate(5, 100, "NTFS filesystem created successfully!");
+//         system(("partprobe " + device_path + " 2>/dev/null").c_str());
+//         return true;
+//     }
+
+//     // 5. NTFS FAILED → fallback to FAT32
+//     SendProgressUpdate(5, 70, "NTFS failed. Falling back to FAT32...");
+
+//     mkfs_cmd = "mkfs.fat -F 32 -n \"Code_wipe\" " + partition_path + " 2>/dev/null";
+//     result = system(mkfs_cmd.c_str());
+
+//     if (result != 0) {
+//         SendProgressUpdate(5, 0, "ERROR: FAT32 fallback also failed.");
+//         return false;
+//     }
+
+//     SendProgressUpdate(5, 100, "FAT32 filesystem created successfully (fallback).");
+//     system(("partprobe " + device_path + " 2>/dev/null").c_str());
+
+//     return true;
+// }
 static bool CreateNewFileSystem(const std::string& device_path) {
-    SendProgressUpdate(5, 0, "Creating new partition table...");
-    
-    // Create a new GPT partition table
-    std::string parted_cmd = "parted -s " + device_path + " mklabel gpt";
+    SendProgressUpdate(5, 0, "Creating new MBR partition table (Windows compatible)...");
+
+    // Force MBR
+    std::string parted_cmd = "parted -s " + device_path + " mklabel msdos";
     int result = system(parted_cmd.c_str());
+
     if (result != 0) {
-        SendProgressUpdate(5, 0, "Warning: Failed to create GPT table, trying MBR...");
-        // Try MBR if GPT fails
-        parted_cmd = "parted -s " + device_path + " mklabel msdos";
-        result = system(parted_cmd.c_str());
-        if (result != 0) {
-            SendProgressUpdate(5, 0, "Error: Failed to create partition table");
-            return false;
-        }
-    }
-    
-    SendProgressUpdate(5, 25, "Partition table created successfully");
-    
-    // Create a primary partition using all available space
-    SendProgressUpdate(5, 30, "Creating primary partition...");
-    parted_cmd = "parted -s " + device_path + " mkpart primary 1MiB 100%";
-    result = system(parted_cmd.c_str());
-    if (result != 0) {
-        SendProgressUpdate(5, 0, "Error: Failed to create primary partition");
+        SendProgressUpdate(5, 0, "ERROR: Failed to create MBR partition table.");
         return false;
     }
-    
-    SendProgressUpdate(5, 50, "Primary partition created");
-    
-    // Wait a moment for the kernel to recognize the new partition
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-    
-    // Force kernel to re-read partition table
-    std::string partprobe_cmd = "partprobe " + device_path;
-    system(partprobe_cmd.c_str());
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    
-    // Determine the partition device path (e.g., /dev/sda1)
-    std::string partition_path = device_path;
-    if (device_path.back() >= '0' && device_path.back() <= '9') {
-        partition_path += "p1";  // For devices like /dev/nvme0n1 -> /dev/nvme0n1p1
-    } else {
-        partition_path += "1";   // For devices like /dev/sda -> /dev/sda1
-    }
-    
-    // Format with FAT32 filesystem (compatible with most systems)
-    SendProgressUpdate(5, 60, "Formatting with FAT32 filesystem...");
-    std::string mkfs_cmd = "mkfs.fat -F 32 -n \"CLEAN_DISK\" " + partition_path + " 2>/dev/null";
-    result = system(mkfs_cmd.c_str());
-    
+
+    SendProgressUpdate(5, 25, "MBR partition table created.");
+
+    // Create primary partition (no 'ntfs' here)
+    SendProgressUpdate(5, 30, "Creating primary partition...");
+
+    parted_cmd = "parted -s " + device_path + " mkpart primary 1MiB 100%";
+    result = system(parted_cmd.c_str());
+
     if (result != 0) {
-        // If FAT32 fails, try ext4
-        SendProgressUpdate(5, 70, "FAT32 failed, trying ext4 filesystem...");
-        mkfs_cmd = "mkfs.ext4 -F -L \"CLEAN_DISK\" " + partition_path + " 2>/dev/null";
-        result = system(mkfs_cmd.c_str());
-        
-        if (result != 0) {
-            SendProgressUpdate(5, 0, "Error: Failed to format partition");
-            return false;
-        }
-        SendProgressUpdate(5, 90, "ext4 filesystem created successfully");
-    } else {
-        SendProgressUpdate(5, 90, "FAT32 filesystem created successfully");
+        SendProgressUpdate(5, 0, "ERROR: Failed to create primary partition.");
+        return false;
     }
-    
-    // Final partition table update
-    system(("partprobe " + device_path + " 2>/dev/null").c_str());
-    
-    SendProgressUpdate(5, 100, "New filesystem created - disk is ready to use!");
+
+    // Set correct NTFS partition type
+    std::string flag_cmd = "parted -s " + device_path + " set 1 msftdata on";
+    system(flag_cmd.c_str());
+
+    SendProgressUpdate(5, 50, "Primary NTFS-compatible partition created.");
+
+    // Re-read partition table
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    system(("partprobe " + device_path).c_str());
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));
+
+    // Detect path (/dev/sda1 or /dev/nvme0n1p1)
+    std::string partition_path = device_path;
+    if (device_path.back() >= '0' && device_path.back() <= '9')
+        partition_path += "p1";
+    else
+        partition_path += "1";
+
+    // Format as NTFS
+    SendProgressUpdate(5, 60, "Formatting as NTFS (Label: Code_wipe)...");
+
+    std::string mkfs_cmd = "mkfs.ntfs -F -f -L \"Code_wipe\" " + partition_path;
+    result = system(mkfs_cmd.c_str());
+
+    if (result != 0) {
+        SendProgressUpdate(5, 0, "ERROR: NTFS format failed.");
+        return false;
+    }
+
+    SendProgressUpdate(5, 100, "NTFS filesystem created successfully!");
+
+    system(("partprobe " + device_path).c_str());
     return true;
 }
+
+
+
 
 // Main DoD 5220.22-M wiping function with enhanced error reporting
 static void PerformDoD522022MWipe(const std::string& device_path) {
