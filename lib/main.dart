@@ -75,41 +75,86 @@ class Secondappstate extends State<MyApp> {
     }
   }
 
-  Future<void> startDoD522022MWipe() async {
-    if (selectedDisk == null || SelectedValue != 'DoD 5220.22-M Standard') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please select DoD 5220.22-M Standard method and a disk')),
-      );
-      return;
-    }
+  // Future<void> startDoD522022MWipe() async {
+  //   if (selectedDisk == null || SelectedValue != 'DoD 5220.22-M Standard') {
+  //     ScaffoldMessenger.of(context).showSnackBar(
+  //       SnackBar(content: Text('Please select DoD 5220.22-M Standard method and a disk')),
+  //     );
+  //     return;
+  //   }
 
+  //   setState(() {
+  //     isWiping = true;
+  //     currentPass = 0;
+  //     currentProgress = 0;
+  //     wipingStatus = "Starting DoD 5220.22-M wipe + format...";
+  //     btncolor = Colors.orange;
+  //   });
+
+  //   try {
+  //     // Extract device path from selected disk info
+  //     String devicePath = "/dev/" + selectedDisk!.split(' ')[0];
+      
+  //     // CHANGED: Use completelyWipeDisk instead of startDoD522022MWipe
+  //     await _channel.invokeMethod('completelyWipeDisk', {
+  //       'devicePath': devicePath,
+  //     });
+  //   } on PlatformException catch (e) {
+  //     setState(() {
+  //       isWiping = false;
+  //       btncolor = Colors.red;
+  //     });
+      
+  //     ScaffoldMessenger.of(context).showSnackBar(
+  //       SnackBar(content: Text('Error: ${e.message}'), backgroundColor: Colors.red),
+  //     );
+  //   }
+  // }
+  Future<void> startDoD522022MWipe() async {
+  if (selectedDisk == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Please select a disk')),
+    );
+    return;
+  }
+
+  if (SelectedValue != 'DoD 5220.22-M Standard' &&
+      SelectedValue != 'NIST SP 800-88 Clear and Purge Guidelines') {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Please select DoD or NIST method')),
+    );
+    return;
+  }
+
+  setState(() {
+    isWiping = true;
+    currentPass = 0;
+    currentProgress = 0;
+    wipingStatus = "Initializing secure wipe...";
+    btncolor = Colors.orange;
+  });
+
+  try {
+    String devicePath = "/dev/" + selectedDisk!.split(' ')[0];
+
+    await _channel.invokeMethod('completelyWipeDisk', {
+      'devicePath': devicePath,
+      'mode': SelectedValue == 'NIST SP 800-88 Clear and Purge Guidelines'
+          ? 'nist'
+          : 'dod',
+    });
+  } on PlatformException catch (e) {
     setState(() {
-      isWiping = true;
-      currentPass = 0;
-      currentProgress = 0;
-      wipingStatus = "Starting DoD 5220.22-M wipe + format...";
-      btncolor = Colors.orange;
+      isWiping = false;
+      btncolor = Colors.red;
     });
 
-    try {
-      // Extract device path from selected disk info
-      String devicePath = "/dev/" + selectedDisk!.split(' ')[0];
-      
-      // CHANGED: Use completelyWipeDisk instead of startDoD522022MWipe
-      await _channel.invokeMethod('completelyWipeDisk', {
-        'devicePath': devicePath,
-      });
-    } on PlatformException catch (e) {
-      setState(() {
-        isWiping = false;
-        btncolor = Colors.red;
-      });
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: ${e.message}'), backgroundColor: Colors.red),
-      );
-    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Error: ${e.message}'), backgroundColor: Colors.red),
+    );
   }
+}
+
 
   void showalert() {
     showDialog(
@@ -133,7 +178,7 @@ class Secondappstate extends State<MyApp> {
               Text("Disk: $selectedDisk", style: TextStyle(fontWeight: FontWeight.bold)),
               SizedBox(height: 10),
               Text(
-                "THIS WILL PERMANENTLY DESTROY ALL DATA!\nDisk will be formatted (FAT32) after wiping.",
+                "THIS WILL PERMANENTLY DESTROY ALL DATA!\nDisk will be formatted (NTFS) after wiping.",
                 style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
                 textAlign: TextAlign.center,
               ),
@@ -197,7 +242,7 @@ This app securely erases data using DoD 5220.22-M standard.
 - Pass 1: Overwrite with zeros (0x00)
 - Pass 2: Overwrite with ones (0xFF)
 - Pass 3: Overwrite with random data
-- Step 4: Create new partition and format (FAT32)
+- Step 4: Create new partition and format (NTFS)
 Disk remains usable after wiping.''',
                 style: TextStyle(
                     color: Colors.white,
@@ -361,12 +406,14 @@ Disk remains usable after wiping.''',
                   hoverColor: isWiping ? null : Colors.orange,
                   padding: EdgeInsets.symmetric(horizontal: 100, vertical: 10),
                   onPressed: isWiping ? null : () {
-                    if (SelectedValue != 'DoD 5220.22-M Standard') {
+                    if (SelectedValue != 'DoD 5220.22-M Standard' &&
+                        SelectedValue != 'NIST SP 800-88 Clear and Purge Guidelines') {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Please select DoD 5220.22-M Standard')),
+                        SnackBar(content: Text('Please select DoD 5220.22-M or NIST Clear')),
                       );
                       return;
                     }
+
                     showalert(); // Show confirmation dialog
                   },
                   child: Text(

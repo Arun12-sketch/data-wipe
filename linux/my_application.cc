@@ -157,18 +157,6 @@ static std::vector<std::string> GetDiskInfo() {
     
     return disks;
 }
-
-// Function to send progress updates to Flutter
-// static void SendProgressUpdate(int pass, int progress, const std::string& status) {
-//     if (!g_method_channel) return;
-    
-//     g_autoptr(FlValue) result = fl_value_new_map();
-//     fl_value_set_string_take(result, "pass", fl_value_new_int(pass));
-//     fl_value_set_string_take(result, "progress", fl_value_new_int(progress));
-//     fl_value_set_string_take(result, "status", fl_value_new_string(status.c_str()));
-    
-//     fl_method_channel_invoke_method(g_method_channel, "onWipeProgress", result, nullptr, nullptr, nullptr);
-// }
 static void SendProgressUpdate(int pass, int progress, const std::string& status) {
     if (!g_method_channel) return;
 
@@ -312,156 +300,6 @@ static bool OverwriteWithRandom(int fd, uint64_t size) {
     fsync(fd);
     return g_wiping_active;
 }
-
-// NEW FUNCTION: Create a new filesystem after wiping
-// static bool CreateNewFileSystem(const std::string& device_path) {
-//     SendProgressUpdate(5, 0, "Creating new partition table...");
-    
-//     // Create a new GPT partition table
-//     std::string parted_cmd = "parted -s " + device_path + " mklabel gpt";
-//     int result = system(parted_cmd.c_str());
-//     if (result != 0) {
-//         SendProgressUpdate(5, 0, "Warning: Failed to create GPT table, trying MBR...");
-//         // Try MBR if GPT fails
-//         parted_cmd = "parted -s " + device_path + " mklabel msdos";
-//         result = system(parted_cmd.c_str());
-//         if (result != 0) {
-//             SendProgressUpdate(5, 0, "Error: Failed to create partition table");
-//             return false;
-//         }
-//     }
-    
-//     SendProgressUpdate(5, 25, "Partition table created successfully");
-    
-//     // Create a primary partition using all available space
-//     SendProgressUpdate(5, 30, "Creating primary partition...");
-//     parted_cmd = "parted -s " + device_path + " mkpart primary 1MiB 100%";
-//     result = system(parted_cmd.c_str());
-//     if (result != 0) {
-//         SendProgressUpdate(5, 0, "Error: Failed to create primary partition");
-//         return false;
-//     }
-    
-//     SendProgressUpdate(5, 50, "Primary partition created");
-    
-//     // Wait a moment for the kernel to recognize the new partition
-//     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-    
-//     // Force kernel to re-read partition table
-//     std::string partprobe_cmd = "partprobe " + device_path;
-//     system(partprobe_cmd.c_str());
-//     std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    
-//     // Determine the partition device path (e.g., /dev/sda1)
-//     std::string partition_path = device_path;
-//     if (device_path.back() >= '0' && device_path.back() <= '9') {
-//         partition_path += "p1";  // For devices like /dev/nvme0n1 -> /dev/nvme0n1p1
-//     } else {
-//         partition_path += "1";   // For devices like /dev/sda -> /dev/sda1
-//     }
-    
-//     // Format with FAT32 filesystem (compatible with most systems)
-//     SendProgressUpdate(5, 60, "Formatting with FAT32 filesystem...");
-//     std::string mkfs_cmd = "mkfs.fat -F 32 -n \"CLEAN_DISK\" " + partition_path + " 2>/dev/null";
-//     result = system(mkfs_cmd.c_str());
-    
-//     if (result != 0) {
-//         // If FAT32 fails, try ext4
-//         SendProgressUpdate(5, 70, "FAT32 failed, trying ext4 filesystem...");
-//         mkfs_cmd = "mkfs.ext4 -F -L \"CLEAN_DISK\" " + partition_path + " 2>/dev/null";
-//         result = system(mkfs_cmd.c_str());
-        
-//         if (result != 0) {
-//             SendProgressUpdate(5, 0, "Error: Failed to format partition");
-//             return false;
-//         }
-//         SendProgressUpdate(5, 90, "ext4 filesystem created successfully");
-//     } else {
-//         SendProgressUpdate(5, 90, "FAT32 filesystem created successfully");
-//     }
-    
-//     // Final partition table update
-//     system(("partprobe " + device_path + " 2>/dev/null").c_str());
-    
-//     SendProgressUpdate(5, 100, "New filesystem created - disk is ready to use!");
-//     return true;
-// }
-// NEW FUNCTION: Create a new NTFS filesystem after wiping
-// NEW FUNCTION: NTFS first, fallback to FAT32 only (Label = Code_wipe)
-// static bool CreateNewFileSystem(const std::string& device_path) {
-//     SendProgressUpdate(5, 0, "Creating new partition table...");
-
-//     // 1. Create GPT (fallback to MBR)
-//     std::string parted_cmd = "parted -s " + device_path + " mklabel gpt";
-//     int result = system(parted_cmd.c_str());
-
-//     if (result != 0) {
-//         SendProgressUpdate(5, 0, "GPT failed. Trying MBR...");
-//         parted_cmd = "parted -s " + device_path + " mklabel msdos";
-//         result = system(parted_cmd.c_str());
-
-//         if (result != 0) {
-//             SendProgressUpdate(5, 0, "ERROR: Cannot create partition table");
-//             return false;
-//         }
-//     }
-
-//     SendProgressUpdate(5, 25, "Partition table created");
-
-//     // 2. Create primary partition
-//     SendProgressUpdate(5, 30, "Creating primary partition...");
-//     parted_cmd = "parted -s " + device_path + " mkpart primary 1MiB 100%";
-//     result = system(parted_cmd.c_str());
-
-//     if (result != 0) {
-//         SendProgressUpdate(5, 0, "ERROR: Cannot create primary partition");
-//         return false;
-//     }
-
-//     SendProgressUpdate(5, 50, "Primary partition created");
-
-//     // Wait for kernel
-//     std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-//     system(("partprobe " + device_path).c_str());
-//     std::this_thread::sleep_for(std::chrono::milliseconds(800));
-
-//     // 3. Detect correct partition path
-//     std::string partition_path = device_path;
-
-//     if (device_path.back() >= '0' && device_path.back() <= '9') {
-//         partition_path += "p1";   // NVMe
-//     } else {
-//         partition_path += "1";    // SATA / USB
-//     }
-
-//     // 4. Format as NTFS (primary)
-//     SendProgressUpdate(5, 60, "Formatting as NTFS (Label: Code_wipe)...");
-
-//     std::string mkfs_cmd = "mkfs.ntfs -F -f -L \"Code_wipe\" " + partition_path + " 2>/dev/null";
-//     result = system(mkfs_cmd.c_str());
-
-//     if (result == 0) {
-//         SendProgressUpdate(5, 100, "NTFS filesystem created successfully!");
-//         system(("partprobe " + device_path + " 2>/dev/null").c_str());
-//         return true;
-//     }
-
-//     // 5. NTFS FAILED → fallback to FAT32
-//     SendProgressUpdate(5, 70, "NTFS failed. Falling back to FAT32...");
-
-//     mkfs_cmd = "mkfs.fat -F 32 -n \"Code_wipe\" " + partition_path + " 2>/dev/null";
-//     result = system(mkfs_cmd.c_str());
-
-//     if (result != 0) {
-//         SendProgressUpdate(5, 0, "ERROR: FAT32 fallback also failed.");
-//         return false;
-//     }
-
-//     SendProgressUpdate(5, 100, "FAT32 filesystem created successfully (fallback).");
-//     system(("partprobe " + device_path + " 2>/dev/null").c_str());
-
-//     return true;
-// }
 static bool CreateNewFileSystem(const std::string& device_path) {
     SendProgressUpdate(5, 0, "Creating new MBR partition table (Windows compatible)...");
 
@@ -499,11 +337,28 @@ static bool CreateNewFileSystem(const std::string& device_path) {
     std::this_thread::sleep_for(std::chrono::milliseconds(800));
 
     // Detect path (/dev/sda1 or /dev/nvme0n1p1)
-    std::string partition_path = device_path;
-    if (device_path.back() >= '0' && device_path.back() <= '9')
-        partition_path += "p1";
-    else
-        partition_path += "1";
+    // std::string partition_path = device_path;
+    // if (device_path.back() >= '0' && device_path.back() <= '9')
+    //     partition_path += "p1";
+    // else
+    //     partition_path += "1";
+    std::string partition_path;
+
+    if (device_path.find("nvme") != std::string::npos) {
+        // NVMe raw disk -> nvme0n1 -> nvme0n1p1
+        if (device_path.find("p") == std::string::npos)
+            partition_path = device_path + "p1";
+        else
+            partition_path = device_path; // Already a partition
+    } else {
+        // SATA/USB disks -> sda -> sda1
+        // But if user passes /dev/sda1, do NOT append 1
+        if (std::isdigit(device_path.back()))
+            partition_path = device_path; // Already a partition
+        else
+            partition_path = device_path + "1";
+    }
+
 
     // Format as NTFS
     SendProgressUpdate(5, 60, "Formatting as NTFS (Label: Code_wipe)...");
@@ -598,118 +453,201 @@ static void PerformDoD522022MWipe(const std::string& device_path) {
     }
     
     g_wiping_active = false;
-}
+    // After DoD passes
+    SendProgressUpdate(4, 0, "Recreating filesystem...");
+    CreateNewFileSystem(device_path);
+    SendProgressUpdate(6, 100, "DoD wipe + NTFS rebuild complete.");
 
-// Complete disk wipe function - FIXED VERSION
-static void CompletelyWipeDisk(const std::string& device_path) {
+}
+static void PerformNISTClear(const std::string& device_path) {
     g_wiping_active = true;
-    
-    SendProgressUpdate(0, 0, "Starting Complete Disk Wipe (DoD + File Removal + Filesystem Recreation)...");
-    
-    // Step 1: Perform DoD 5220.22-M wipe (existing algorithm)
-    SendProgressUpdate(0, 0, "Step 1: DoD 5220.22-M data overwriting...");
-    
-    // Get device size first
+
+    SendProgressUpdate(0, 0, "Starting NIST SP 800-88 CLEAR...");
+
     uint64_t device_size = GetDiskSize(device_path);
     if (device_size == 0) {
-        SendProgressUpdate(0, 0, "Error: Cannot determine device size. Check permissions and device path.");
+        SendProgressUpdate(0, 0, "ERROR: Unable to read device size.");
         g_wiping_active = false;
         return;
     }
-    
-    char size_str[64];
-    snprintf(size_str, sizeof(size_str), "Device size: %.2f GB", device_size / (1024.0 * 1024.0 * 1024.0));
-    SendProgressUpdate(0, 0, size_str);
-    
-    // Open device for DoD wiping
+
     int fd = open(device_path.c_str(), O_WRONLY);
     if (fd < 0) {
-        char error_msg[256];
-        snprintf(error_msg, sizeof(error_msg), "Error: Cannot open device for writing: %s (errno: %d)", 
-                strerror(errno), errno);
-        SendProgressUpdate(0, 0, error_msg);
+        SendProgressUpdate(0, 0, std::string("ERROR opening device: ") + strerror(errno));
         g_wiping_active = false;
         return;
     }
-    
-    // DoD Pass 1: Zeros
-    SendProgressUpdate(1, 0, "DoD Pass 1: Writing zeros...");
+
+    // Single pass: write zeros
+    SendProgressUpdate(1, 0, "NIST Clear Pass: Writing zeros...");
     if (!OverwriteWithZeros(fd, device_size)) {
-        SendProgressUpdate(1, 0, g_wiping_active ? "Error in DoD Pass 1" : "Wiping cancelled");
+        SendProgressUpdate(1, 0, "ERROR: Zero-fill failed.");
         close(fd);
         g_wiping_active = false;
         return;
     }
-    SendProgressUpdate(1, 100, "DoD Pass 1 completed");
-    
-    // DoD Pass 2: Ones
-    SendProgressUpdate(2, 0, "DoD Pass 2: Writing ones...");
-    if (!OverwriteWithOnes(fd, device_size)) {
-        SendProgressUpdate(2, 0, g_wiping_active ? "Error in DoD Pass 2" : "Wiping cancelled");
-        close(fd);
-        g_wiping_active = false;
-        return;
-    }
-    SendProgressUpdate(2, 100, "DoD Pass 2 completed");
-    
-    // DoD Pass 3: Random
-    SendProgressUpdate(3, 0, "DoD Pass 3: Writing random data...");
-    if (!OverwriteWithRandom(fd, device_size)) {
-        SendProgressUpdate(3, 0, g_wiping_active ? "Error in DoD Pass 3" : "Wiping cancelled");
-        close(fd);
-        g_wiping_active = false;
-        return;
-    }
-    SendProgressUpdate(3, 100, "DoD Pass 3 completed");
-    
+    SendProgressUpdate(1, 100, "Zero-fill complete.");
+    fsync(fd);
     close(fd);
-    
-    if (!g_wiping_active) return;
-    
-    // Step 2: Destroy partition table and filesystem metadata
-    SendProgressUpdate(4, 0, "Step 2: Destroying old partition table and filesystem metadata...");
-    
+
+    // Destroy partition tables (first & last 1MB)
+    SendProgressUpdate(4, 30, "Wiping partition metadata...");
     fd = open(device_path.c_str(), O_WRONLY);
     if (fd >= 0) {
-        // Wipe first 1MB (contains partition table, boot sectors, filesystem headers)
-        const size_t metadata_size = 1024 * 1024; // 1MB
-        std::vector<char> zero_buffer(metadata_size, 0x00);
+        const size_t md = 1024 * 1024;
+        std::vector<char> z(md, 0);
         
+        // First MB
         lseek(fd, 0, SEEK_SET);
-        ssize_t written_start = write(fd, zero_buffer.data(), metadata_size);
+        write(fd, z.data(), md);
         fsync(fd);
-        
-        // Also wipe last 1MB (backup partition tables)
-        if (device_size > metadata_size) {
-            lseek(fd, device_size - metadata_size, SEEK_SET);
-            write(fd, zero_buffer.data(), metadata_size);
+
+        // Last MB backup table
+        if (device_size > md) {
+            lseek(fd, device_size - md, SEEK_SET);
+            write(fd, z.data(), md);
             fsync(fd);
         }
-        
+
         close(fd);
-        
-        if (written_start > 0) {
-            SendProgressUpdate(4, 50, "Old partition table destroyed");
-        }
     }
-    
-    // Step 3: Force kernel to re-read partition table
-    SendProgressUpdate(4, 75, "Step 3: Updating system partition table...");
-    std::string partprobe_cmd = "partprobe " + device_path + " 2>/dev/null";
-    system(partprobe_cmd.c_str());
-    
-    SendProgressUpdate(4, 100, "Old filesystem completely destroyed");
-    
-    if (!g_wiping_active) return;
-    
-    // Step 4: NEW - Create new filesystem so disk is usable
+    SendProgressUpdate(4, 60, "Metadata wiped.");
+
+    // Re-read partition table
+    SendProgressUpdate(4, 80, "Reloading partition table...");
+    system(("partprobe " + device_path).c_str());
+
+    // Create new NTFS filesystem (shared with DoD)
+    SendProgressUpdate(5, 0, "Recreating filesystem...");
     if (CreateNewFileSystem(device_path)) {
-        SendProgressUpdate(6, 100, "Complete disk wipe finished! Disk has been securely wiped and is ready for use.");
+        SendProgressUpdate(6, 100, "NIST CLEAR completed successfully!");
     } else {
-        SendProgressUpdate(6, 100, "Disk wipe completed but filesystem creation failed. Disk may need manual formatting.");
+        SendProgressUpdate(6, 0, "NIST CLEAR complete, but filesystem creation failed.");
     }
-    
+
     g_wiping_active = false;
+}
+
+
+// Complete disk wipe function - FIXED VERSION
+// static void CompletelyWipeDisk(const std::string& device_path) {
+//     g_wiping_active = true;
+    
+//     SendProgressUpdate(0, 0, "Starting Complete Disk Wipe (DoD + File Removal + Filesystem Recreation)...");
+    
+//     // Step 1: Perform DoD 5220.22-M wipe (existing algorithm)
+//     SendProgressUpdate(0, 0, "Step 1: DoD 5220.22-M data overwriting...");
+    
+//     // Get device size first
+//     uint64_t device_size = GetDiskSize(device_path);
+//     if (device_size == 0) {
+//         SendProgressUpdate(0, 0, "Error: Cannot determine device size. Check permissions and device path.");
+//         g_wiping_active = false;
+//         return;
+//     }
+    
+//     char size_str[64];
+//     snprintf(size_str, sizeof(size_str), "Device size: %.2f GB", device_size / (1024.0 * 1024.0 * 1024.0));
+//     SendProgressUpdate(0, 0, size_str);
+    
+//     // Open device for DoD wiping
+//     int fd = open(device_path.c_str(), O_WRONLY);
+//     if (fd < 0) {
+//         char error_msg[256];
+//         snprintf(error_msg, sizeof(error_msg), "Error: Cannot open device for writing: %s (errno: %d)", 
+//                 strerror(errno), errno);
+//         SendProgressUpdate(0, 0, error_msg);
+//         g_wiping_active = false;
+//         return;
+//     }
+    
+//     // DoD Pass 1: Zeros
+//     SendProgressUpdate(1, 0, "DoD Pass 1: Writing zeros...");
+//     if (!OverwriteWithZeros(fd, device_size)) {
+//         SendProgressUpdate(1, 0, g_wiping_active ? "Error in DoD Pass 1" : "Wiping cancelled");
+//         close(fd);
+//         g_wiping_active = false;
+//         return;
+//     }
+//     SendProgressUpdate(1, 100, "DoD Pass 1 completed");
+    
+//     // DoD Pass 2: Ones
+//     SendProgressUpdate(2, 0, "DoD Pass 2: Writing ones...");
+//     if (!OverwriteWithOnes(fd, device_size)) {
+//         SendProgressUpdate(2, 0, g_wiping_active ? "Error in DoD Pass 2" : "Wiping cancelled");
+//         close(fd);
+//         g_wiping_active = false;
+//         return;
+//     }
+//     SendProgressUpdate(2, 100, "DoD Pass 2 completed");
+    
+//     // DoD Pass 3: Random
+//     SendProgressUpdate(3, 0, "DoD Pass 3: Writing random data...");
+//     if (!OverwriteWithRandom(fd, device_size)) {
+//         SendProgressUpdate(3, 0, g_wiping_active ? "Error in DoD Pass 3" : "Wiping cancelled");
+//         close(fd);
+//         g_wiping_active = false;
+//         return;
+//     }
+//     SendProgressUpdate(3, 100, "DoD Pass 3 completed");
+    
+//     close(fd);
+    
+//     if (!g_wiping_active) return;
+    
+//     // Step 2: Destroy partition table and filesystem metadata
+//     SendProgressUpdate(4, 0, "Step 2: Destroying old partition table and filesystem metadata...");
+    
+//     fd = open(device_path.c_str(), O_WRONLY);
+//     if (fd >= 0) {
+//         // Wipe first 1MB (contains partition table, boot sectors, filesystem headers)
+//         const size_t metadata_size = 1024 * 1024; // 1MB
+//         std::vector<char> zero_buffer(metadata_size, 0x00);
+        
+//         lseek(fd, 0, SEEK_SET);
+//         ssize_t written_start = write(fd, zero_buffer.data(), metadata_size);
+//         fsync(fd);
+        
+//         // Also wipe last 1MB (backup partition tables)
+//         if (device_size > metadata_size) {
+//             lseek(fd, device_size - metadata_size, SEEK_SET);
+//             write(fd, zero_buffer.data(), metadata_size);
+//             fsync(fd);
+//         }
+        
+//         close(fd);
+        
+//         if (written_start > 0) {
+//             SendProgressUpdate(4, 50, "Old partition table destroyed");
+//         }
+//     }
+    
+//     // Step 3: Force kernel to re-read partition table
+//     SendProgressUpdate(4, 75, "Step 3: Updating system partition table...");
+//     std::string partprobe_cmd = "partprobe " + device_path + " 2>/dev/null";
+//     system(partprobe_cmd.c_str());
+    
+//     SendProgressUpdate(4, 100, "Old filesystem completely destroyed");
+    
+//     if (!g_wiping_active) return;
+    
+//     // Step 4: NEW - Create new filesystem so disk is usable
+//     if (CreateNewFileSystem(device_path)) {
+//         SendProgressUpdate(6, 100, "Complete disk wipe finished! Disk has been securely wiped and is ready for use.");
+//     } else {
+//         SendProgressUpdate(6, 100, "Disk wipe completed but filesystem creation failed. Disk may need manual formatting.");
+//     }
+    
+//     g_wiping_active = false;
+// }
+static void CompletelyWipeDisk(const std::string& device_path, const std::string& mode) {
+// --- SAFETY BLOCK: Prevent wiping internal disk ---
+
+    if (mode == "nist") {
+        PerformNISTClear(device_path);
+    } else {
+        PerformDoD522022MWipe(device_path);
+    }
 }
 
 // Platform channel method call handler
@@ -747,25 +685,138 @@ static void method_call_handler(FlMethodChannel* channel, FlMethodCall* method_c
         
         fl_method_call_respond_success(method_call, fl_value_new_bool(TRUE), nullptr);
         
+    // } else if (g_strcmp0(method, "completelyWipeDisk") == 0) {
+    //     FlValue* args = fl_method_call_get_args(method_call);
+    //     const char* device_path = fl_value_get_string(fl_value_lookup_string(args, "devicePath"));
+
+    //     // --- SAFETY BLOCK: Prevent wiping /dev/sda ---
+    //     // Check if disk is a removable USB device
+    //     // std::string sys_path = "/sys/block/" + std::string(device_path).substr(5) + "/removable";
+    //     // Strip /dev/ prefix
+    //     // std::string dev = device_path.substr(5);
+    //     // Convert C-string → C++ string
+    //     std::string dev_path(device_path);
+
+    //     // Strip "/dev/"
+    //     if (dev_path.rfind("/dev/", 0) == 0) {
+    //         dev_path = dev_path.substr(5); // now safe
+    //     }
+
+    //     // Remove partition number (sda1 → sda, nvme0n1p1 → nvme0n1)
+    //     while (!dev_path.empty() && std::isdigit(dev_path.back())) {
+    //         dev_path.pop_back();
+    //     }
+    //     if (!dev_path.empty() && dev_path.back() == 'p') {
+    //         dev_path.pop_back();
+    //     }
+
+    //     std::string sys_path = "/sys/block/" + dev_path + "/removable";
+
+
+    //     // Remove partition number (e.g., sda1 → sda, nvme0n1p1 → nvme0n1)
+    //     while (dev.size() > 0 && std::isdigit(dev.back())) dev.pop_back();
+    //     if (!dev.empty() && dev.back() == 'p') dev.pop_back();
+
+    //     std::string sys_path = "/sys/block/" + dev + "/removable";
+
+
+    //     std::ifstream file(sys_path);
+    //     int removable = 0;
+    //     if (file.is_open()) {
+    //         file >> removable;
+    //         file.close();
+    //     }
+
+    //     // removable == 1 → USB → safe
+    //     // removable == 0 → system/internal disk → block
+    //     if (removable == 0) {
+    //         fl_method_call_respond_error(method_call,
+    //                                     "SYSTEM_DISK_BLOCKED",
+    //                                     "Refusing to wipe internal system disk",
+    //                                     nullptr,
+    //                                     nullptr);
+    //         return;
+    //     }
+
+    //     // ------------------------------------------------
+
+    //     const char* mode_c = nullptr;
+    //     FlValue* mode_val = fl_value_lookup_string(args, "mode");
+    //     if (mode_val)
+    //         mode_c = fl_value_get_string(mode_val);
+
+    //     std::string mode = mode_c ? mode_c : "dod"; // default = DoD
+
+    //     std::thread wipe_thread([device_path, mode]() {
+    //         CompletelyWipeDisk(device_path, mode);
+    //     });
+    //     wipe_thread.detach();
+
+    //     fl_method_call_respond_success(method_call, fl_value_new_bool(TRUE), nullptr);
+    // }
     } else if (g_strcmp0(method, "completelyWipeDisk") == 0) {
-        // Complete disk wipe method
         FlValue* args = fl_method_call_get_args(method_call);
         const char* device_path = fl_value_get_string(fl_value_lookup_string(args, "devicePath"));
-        
-        if (g_wiping_active) {
-            fl_method_call_respond_error(method_call, "WIPE_IN_PROGRESS", "Another wipe operation is already in progress", nullptr, nullptr);
+
+        if (!device_path) {
+            fl_method_call_respond_error(method_call,
+                                        "INVALID_DEVICE",
+                                        "Device path missing",
+                                        nullptr,
+                                        nullptr);
             return;
         }
-        
-        // Start complete wiping in a separate thread
-        std::thread wipe_thread([device_path]() {
-            CompletelyWipeDisk(device_path);
+
+        // Convert to std::string
+        std::string dev_path(device_path);
+
+        // Remove "/dev/"
+        if (dev_path.rfind("/dev/", 0) == 0) {
+            dev_path = dev_path.substr(5);
+        }
+
+        // Remove partition numbers
+        while (!dev_path.empty() && std::isdigit(dev_path.back())) {
+            dev_path.pop_back();
+        }
+        if (!dev_path.empty() && dev_path.back() == 'p') {
+            dev_path.pop_back();
+        }
+
+        // Check if removable
+        std::string sys_path = "/sys/block/" + dev_path + "/removable";
+
+        std::ifstream file(sys_path);
+        int removable = 0;
+        if (file.is_open()) {
+            file >> removable;
+            file.close();
+        }
+
+        if (removable == 0) {
+            fl_method_call_respond_error(method_call,
+                                        "SYSTEM_DISK_BLOCKED",
+                                        "Refusing to wipe internal system disk",
+                                        nullptr,
+                                        nullptr);
+            return;
+        }
+
+        // Get wiping mode
+        const char* mode_c = nullptr;
+        FlValue* mode_val = fl_value_lookup_string(args, "mode");
+        if (mode_val) mode_c = fl_value_get_string(mode_val);
+
+        std::string mode = mode_c ? mode_c : "dod";
+
+        // Run wipe in background
+        std::thread wipe_thread([device_path, mode]() {
+            CompletelyWipeDisk(device_path, mode);
         });
         wipe_thread.detach();
-        
+
         fl_method_call_respond_success(method_call, fl_value_new_bool(TRUE), nullptr);
-        
-    } else if (g_strcmp0(method, "cancelWipe") == 0) {
+    }else if (g_strcmp0(method, "cancelWipe") == 0) {
         g_wiping_active = false;
         SendProgressUpdate(0, 0, "Wipe operation cancelled by user");
         fl_method_call_respond_success(method_call, fl_value_new_bool(TRUE), nullptr);
