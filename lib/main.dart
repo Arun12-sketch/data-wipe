@@ -26,8 +26,9 @@ class Secondappstate extends State<MyApp> {
   List<String> diskInfoList = [];
   String? selectedDisk;
 
-  // Wiping progress variables
   bool isWiping = false;
+  bool wasWiping = false;   // <-- IMPORTANT (for completion popup)
+
   int currentPass = 0;
   int currentProgress = 0;
   String wipingStatus = "";
@@ -44,21 +45,43 @@ class Secondappstate extends State<MyApp> {
     super.initState();
     fetchDiskInfo();
 
-    // Set up method channel listener for progress updates
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'onWipeProgress') {
         final args = Map<String, dynamic>.from(call.arguments as Map);
+
         setState(() {
+          wasWiping = isWiping; // track state before update
+
           currentPass = args['pass'] ?? 0;
           currentProgress = args['progress'] ?? 0;
           wipingStatus = args['status'] ?? "";
 
-          // Completion detection
-          // DoD/NIST use passes up to 6 (we treat 6 as finish), Gutmann uses 10..13, singlepass uses 22 in native flow
           if (currentProgress == 100 &&
-              (currentPass == 6 || currentPass == 13 || currentPass == 22 || currentPass >= 100)) {
+              (currentPass == 6 || currentPass == 13 || currentPass == 22)) {
             isWiping = false;
             btncolor = Colors.green;
+          }
+
+          // Show popup ONLY when going from wiping → not wiping
+          if (wasWiping == true && isWiping == false) {
+            Future.delayed(Duration(milliseconds: 300), () {
+              showDialog(
+                context: context,
+                builder: (_) => AlertDialog(
+                  title: Text("Wipe Completed"),
+                  content: Text(
+                    "Your disk has been securely wiped and reformatted (NTFS).",
+                    style: TextStyle(fontSize: 16),
+                  ),
+                  actions: [
+                    TextButton(
+                      child: Text("OK"),
+                      onPressed: () => Navigator.pop(context),
+                    )
+                  ],
+                ),
+              );
+            });
           }
         });
       }
@@ -71,16 +94,10 @@ class Secondappstate extends State<MyApp> {
       final diskStrings = disks.cast<String>();
 
       setState(() {
-        // Keep raw lines but show them as-is so your UI looks identical
         diskInfoList = diskStrings;
-        if (diskInfoList.isNotEmpty) {
-          selectedDisk = diskInfoList[0];
-        } else {
-          selectedDisk = null;
-        }
+        selectedDisk = diskInfoList.isNotEmpty ? diskInfoList[0] : null;
       });
-    } on PlatformException catch (e) {
-      print('Failed to get disk info: ${e.message}');
+    } catch (e) {
       setState(() {
         diskInfoList = ['Failed to fetch disk info'];
         selectedDisk = diskInfoList[0];
@@ -88,27 +105,30 @@ class Secondappstate extends State<MyApp> {
     }
   }
 
-  // Parse device safely from lsblk line (strip tree-drawing characters & whitespace)
-  String _extractDeviceFromListLine(String line) {
-    // Take first token and remove non-alphanumeric characters (keeps sda, sda1, nvme0n1p1 etc.)
-    final token = line.trim().split(RegExp(r'\s+'))[0];
-    final dev = token.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
-    return dev;
+  // String _extractDeviceFromListLine(String line) {
+  //   final token = line.trim().split(RegExp(r'\s+'))[0];
+  //   final dev = token.replaceAll(RegExp(r'[^A-Za-z0-9]'), '');
+  //   return dev;
+  // }
+String _extractDeviceFromListLine(String line) {
+  for (String part in line.split(" ")) {
+    if (part.startsWith("NAME=")) {
+      return part.substring(5).replaceAll('"', '');
+    }
   }
+  return "";
+}
+
+
 
   Future<void> startDoD522022MWipe() async {
     if (selectedDisk == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please select a disk')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Please select a disk')));
       return;
     }
 
-    // validation: only allow supportedMethods
     if (!supportedMethods.containsKey(SelectedValue)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please select DoD, NIST, Gutmann or Single Pass')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Select a valid method')));
       return;
     }
 
@@ -129,15 +149,14 @@ class Secondappstate extends State<MyApp> {
         'devicePath': devicePath,
         'mode': mode,
       });
-    } on PlatformException catch (e) {
+    } catch (e) {
       setState(() {
         isWiping = false;
         btncolor = Colors.red;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: ${e.message}'), backgroundColor: Colors.red),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
     }
   }
 
@@ -159,8 +178,10 @@ class Secondappstate extends State<MyApp> {
                 children: [
                   Text("You are about to perform a secure wipe:"),
                   SizedBox(height: 10),
-                  Text("Method: $SelectedValue", style: TextStyle(fontWeight: FontWeight.bold)),
-                  Text("Disk: $selectedDisk", style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text("Method: $SelectedValue",
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text("Disk: $selectedDisk",
+                      style: TextStyle(fontWeight: FontWeight.bold)),
                   SizedBox(height: 10),
                   Text(
                     "THIS WILL PERMANENTLY DESTROY ALL DATA!\nDisk will be formatted (NTFS) after wiping.",
@@ -170,29 +191,21 @@ class Secondappstate extends State<MyApp> {
                 ],
               ),
               actions: [
-                MaterialButton(
-                  color: Colors.grey,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                TextButton(
                   onPressed: () {
                     Navigator.of(context).pop();
-                    setState(() {
-                      btncolor = Colors.red;
-                    });
+                    btncolor = Colors.red;
                   },
-                  child: Text("Cancel", style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                  child: Text("Cancel"),
                 ),
-                MaterialButton(
-                  color: Colors.red,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                  hoverColor: Colors.orange,
+                TextButton(
                   onPressed: () {
                     Navigator.of(context).pop();
-                    startDoD522022MWipe(); // start wipe
+                    startDoD522022MWipe();
                   },
-                  child: Text("START WIPE", style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold)),
+                  child: Text("START WIPE", style: TextStyle(color: Colors.red)),
                 )
-              ]
-          );
+              ]);
         });
   }
 
@@ -207,13 +220,24 @@ class Secondappstate extends State<MyApp> {
         ),
         backgroundColor: Colors.black26,
         centerTitle: true,
-        actions: [
-          IconButton(
-            icon: Icon(Icons.refresh),
-            onPressed: isWiping ? null : fetchDiskInfo,
-          )
-        ],
+
+        // ❌ Removed refresh button completely
       ),
+
+      // appBar: AppBar(
+      //   title: Text(
+      //     "CODEWIPE",
+      //     style: TextStyle(color: Colors.white, fontSize: 25, fontWeight: FontWeight.bold),
+      //   ),
+      //   backgroundColor: Colors.black26,
+      //   centerTitle: true,
+      //   actions: [
+      //     IconButton(
+      //       icon: Icon(Icons.refresh),
+      //       onPressed: isWiping ? null : fetchDiskInfo,
+      //     )
+      //   ],
+      // ),
       body: ListView(
         children: [
           Container(
@@ -222,7 +246,6 @@ class Secondappstate extends State<MyApp> {
                 color: Colors.grey, borderRadius: BorderRadius.circular(26)),
             height: 300,
             margin: EdgeInsets.all(20),
-            width: double.infinity,
             padding: EdgeInsets.all(16),
             child: SingleChildScrollView(
               child: Text(
@@ -257,27 +280,21 @@ Disk remains usable after wiping.''',
                   ),
                   SizedBox(height: 10),
                   LinearProgressIndicator(
-                    value: (currentProgress / 100.0).clamp(0.0, 1.0),
+                    value: (currentProgress / 100).clamp(0.0, 1.0),
                     backgroundColor: Colors.grey,
-                    valueColor: AlwaysStoppedAnimation<Color>(Colors.orange),
+                    valueColor: AlwaysStoppedAnimation(Colors.orange),
                   ),
                   SizedBox(height: 10),
-                  Text(
-                    "Step $currentPass - $currentProgress%",
-                    style: TextStyle(color: Colors.white, fontSize: 16),
-                  ),
-                  Text(
-                    wipingStatus,
-                    style: TextStyle(color: Colors.white, fontSize: 14),
-                  ),
+                  Text("Step $currentPass - $currentProgress%",
+                      style: TextStyle(color: Colors.white)),
+                  Text(wipingStatus,
+                      style: TextStyle(color: Colors.white)),
                 ],
               ),
             ),
           ],
 
           Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Container(
                 alignment: Alignment.center,
@@ -298,16 +315,8 @@ Disk remains usable after wiping.''',
                   value: SelectedValue,
                   isExpanded: true,
                   decoration: InputDecoration(
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      borderSide: BorderSide.none,
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      borderSide: BorderSide.none,
-                    ),
-                    filled: true,
-                    fillColor: Colors.grey,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
                   ),
                   items: <String>[
                     'Select any one of the following',
@@ -321,9 +330,7 @@ Disk remains usable after wiping.''',
                       child: Text(
                         value,
                         style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold),
+                            color: Colors.white, fontSize: 15),
                       ),
                     );
                   }).toList(),
@@ -334,6 +341,7 @@ Disk remains usable after wiping.''',
                   },
                 ),
               ),
+
               Container(
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
@@ -341,11 +349,10 @@ Disk remains usable after wiping.''',
                     borderRadius: BorderRadius.circular(20),
                     boxShadow: [
                       BoxShadow(
-                        spreadRadius: 2,
-                        blurRadius: 10,
-                        color: Colors.orange,
-                        offset: Offset(0, 5),
-                      )
+                          spreadRadius: 2,
+                          blurRadius: 10,
+                          color: Colors.orange,
+                          offset: Offset(0, 5))
                     ]),
                 padding: EdgeInsets.all(16),
                 margin: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -354,29 +361,47 @@ Disk remains usable after wiping.''',
                   value: selectedDisk,
                   isExpanded: true,
                   decoration: InputDecoration(
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      borderSide: BorderSide.none,
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      borderSide: BorderSide.none,
-                    ),
-                    filled: true,
-                    fillColor: Colors.grey,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
                   ),
-                  items: diskInfoList.map((String disk) {
-                    return DropdownMenuItem<String>(
-                      value: disk,
-                      child: Text(
-                        disk,
-                        style: TextStyle(
+                    items: diskInfoList.map((String disk) {
+                      String model = "Unknown";
+                      String size = "Unknown";
+                      String name = "";
+
+                      for (var part in disk.split(" ")) {
+                        if (part.startsWith("MODEL=")) model = part.substring(6);
+                        if (part.startsWith("SIZE=")) size = part.substring(5);
+                        if (part.startsWith("NAME=")) name = part.substring(5);
+                      }
+
+                      String display = "$model  $size";
+
+                      return DropdownMenuItem<String>(
+                        value: disk,
+                        child: Text(
+                          display,
+                          style: TextStyle(
                             color: Colors.white,
                             fontSize: 15,
-                            fontWeight: FontWeight.bold),
-                      ),
-                    );
-                  }).toList(),
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      );
+                    }).toList(),
+
+
+
+                  // items: diskInfoList.map((String disk) {
+                  //   return DropdownMenuItem<String>(
+                  //     value: disk,
+                  //     child: Text(
+                  //       disk,
+                  //       style: TextStyle(
+                  //           color: Colors.white, fontSize: 15),
+                  //     ),
+                  //   );
+                  // }).toList(),
                   onChanged: isWiping ? null : (newvalue) {
                     setState(() {
                       selectedDisk = newvalue!;
@@ -384,28 +409,33 @@ Disk remains usable after wiping.''',
                   },
                 ),
               ),
+
               Container(
-                  margin: EdgeInsets.only(top: 20),
-                  child: MaterialButton(
-                    color: btncolor,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                    height: 50,
-                    hoverColor: isWiping ? null : Colors.orange,
-                    padding: EdgeInsets.symmetric(horizontal: 100, vertical: 10),
-                    onPressed: isWiping ? null : () {
-                      if (!supportedMethods.containsKey(SelectedValue)) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Please select DoD, NIST, Gutmann or Single Pass')),
-                        );
-                        return;
-                      }
-                      showalert(); // Show confirmation dialog
-                    },
-                    child: Text(
-                        isWiping ? "WIPING..." : "PROCEED",
-                        style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)
-                    ),
-                  )
+                margin: EdgeInsets.only(top: 20),
+                child: MaterialButton(
+                  color: btncolor,
+                  shape:
+                      RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  height: 50,
+                  hoverColor: isWiping ? null : Colors.orange,
+                  padding: EdgeInsets.symmetric(horizontal: 100, vertical: 10),
+                  onPressed: isWiping
+                      ? null
+                      : () {
+                          if (!supportedMethods.containsKey(SelectedValue)) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                  content: Text('Please select DoD, NIST, Gutmann or Single Pass')),
+                            );
+                            return;
+                          }
+                          showalert();
+                        },
+                  child: Text(
+                    isWiping ? "WIPING..." : "PROCEED",
+                    style: TextStyle(color: Colors.white, fontSize: 20),
+                  ),
+                ),
               )
             ],
           )

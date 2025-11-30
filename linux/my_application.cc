@@ -10,6 +10,8 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <sstream>
+
 #include <cstdarg>
 #include <string>
 #include <vector>
@@ -46,13 +48,23 @@ static FlMethodChannel* g_method_channel = nullptr;
 static bool g_wiping_active = false;
 
 // -------------------- Logging helper --------------------
+// static void Log(const char* fmt, ...) {
+//   va_list ap;
+//   va_start(ap, fmt);
+//   vprintf(fmt, ap);
+//   printf("\n");
+//   va_end(ap);
+// }
+
 static void Log(const char* fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
   vprintf(fmt, ap);
   printf("\n");
+  fflush(stdout);   
   va_end(ap);
 }
+
 
 // -------------------- Shell helper: run command quietly --------------------
 static bool RunCmdQuiet(const std::string& cmd) {
@@ -144,24 +156,74 @@ static uint64_t GetDiskSize(const std::string& device_path) {
   return size;
 }
 
+// static std::vector<std::string> GetDiskInfo() {
+//   std::vector<std::string> disks;
+//   const char* cmd = "lsblk -o NAME,SIZE,MOUNTPOINT --noheadings";
+//   FILE* pipe = popen(cmd, "r");
+//   if (!pipe) {
+//     disks.push_back("Error: Cannot get disk info");
+//     return disks;
+//   }
+//   char buffer[256];
+//   while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+//     std::string line(buffer);
+//     if (!line.empty() && line.back() == '\n') line.pop_back();
+//     if (!line.empty()) disks.push_back(line);
+//   }
+//   pclose(pipe);
+//   if (disks.empty()) disks.push_back("No disk information available");
+//   return disks;
+// }
 static std::vector<std::string> GetDiskInfo() {
   std::vector<std::string> disks;
-  const char* cmd = "lsblk -o NAME,SIZE,MOUNTPOINT --noheadings";
+
+  // JSON output (best for MACHINE-PARSING)
+  const char* cmd = "lsblk -J -o NAME,SIZE,MODEL,RM,TYPE";
   FILE* pipe = popen(cmd, "r");
   if (!pipe) {
     disks.push_back("Error: Cannot get disk info");
     return disks;
   }
-  char buffer[256];
-  while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-    std::string line(buffer);
-    if (!line.empty() && line.back() == '\n') line.pop_back();
-    if (!line.empty()) disks.push_back(line);
+
+  char buffer[8192];
+  std::string json;
+  while (fgets(buffer, sizeof(buffer), pipe)) {
+    json += buffer;
   }
   pclose(pipe);
-  if (disks.empty()) disks.push_back("No disk information available");
+
+  // Parse JSON manually (simple substring extraction)
+  size_t pos = 0;
+  while ((pos = json.find("\"name\":", pos)) != std::string::npos) {
+
+    auto extract = [&](const std::string& key) {
+      size_t k = json.find(key, pos);
+      if (k == std::string::npos) return std::string("");
+
+      size_t q1 = json.find("\"", k + key.size());
+      size_t q2 = json.find("\"", q1 + 1);
+      return json.substr(q1 + 1, q2 - q1 - 1);
+    };
+
+    std::string name  = extract("\"name\":");
+    std::string size  = extract("\"size\":");
+    std::string model = extract("\"model\":");
+    std::string type  = extract("\"type\":");
+
+    // Only show actual DISKS (not partitions)
+    if (type == "disk") {
+      std::string out = "NAME=" + name + " SIZE=" + size + " MODEL=" + model;
+      disks.push_back(out);
+    }
+
+    pos += 5;
+  }
+
+  if (disks.empty()) disks.push_back("No valid disks found");
   return disks;
 }
+
+
 
 // -------------------- Flutter progress updates --------------------
 static void SendProgressUpdate(int pass, int progress, const std::string& status) {
@@ -403,8 +465,100 @@ static bool CreateNewFileSystem(const std::string& device_path) {
 }
 
 // -------------------- Wipe flows --------------------
+// static void PerformDoD522022MWipe(const std::string& device_path) {
+  
+//   g_wiping_active = true;
+//   auto end_time = std::chrono::steady_clock::now();
+//   auto end_epoch = std::time(nullptr);
+//   auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
+
+//   Log("==========================================");
+//   Log("Wipe Finished at (epoch): %lld", (long long)end_epoch);
+//   Log("Total Time Taken: %lld seconds", (long long)elapsed);
+//   Log("==========================================");
+
+//   char dbg[256];
+//   snprintf(dbg, sizeof(dbg), "Received device path: '%s'", device_path.c_str());
+//   SendProgressUpdate(0, 0, dbg);
+//   SendProgressUpdate(0, 0, "Initializing DoD 5220.22-M wipe...");
+
+//   uint64_t device_size = GetDiskSize(device_path);
+//   if (device_size == 0) {
+//     SendProgressUpdate(0, 0, "Error: Cannot determine device size.");
+//     g_wiping_active = false;
+//     return;
+//   }
+
+//   char size_str[128];
+//   snprintf(size_str, sizeof(size_str), "Device size: %.2f GB", device_size / (1024.0 * 1024.0 * 1024.0));
+//   SendProgressUpdate(0, 0, size_str);
+
+//   int fd = open(device_path.c_str(), O_WRONLY);
+//   if (fd < 0) {
+//     char em[256];
+//     snprintf(em, sizeof(em), "Error: Cannot open device for writing: %s (errno: %d)", strerror(errno), errno);
+//     SendProgressUpdate(0, 0, em);
+//     g_wiping_active = false;
+//     return;
+//   }
+
+//   SendProgressUpdate(1, 0, "Starting Pass 1: Writing zeros...");
+//   if (!OverwriteWithZeros(fd, device_size, 1, "DoD Pass 1: Writing zeros...")) {
+//     SendProgressUpdate(1, 0, g_wiping_active ? "Error in Pass 1" : "Wiping cancelled");
+//     close(fd);
+//     g_wiping_active = false;
+//     return;
+//   }
+//   SendProgressUpdate(1, 100, "Pass 1 completed: All zeros written");
+
+//   SendProgressUpdate(2, 0, "Starting Pass 2: Writing ones...");
+//   if (!OverwriteWithOnes(fd, device_size)) {
+//     SendProgressUpdate(2, 0, g_wiping_active ? "Error in Pass 2" : "Wiping cancelled");
+//     close(fd);
+//     g_wiping_active = false;
+//     return;
+//   }
+//   SendProgressUpdate(2, 100, "Pass 2 completed: All ones written");
+
+//   SendProgressUpdate(3, 0, "Starting Pass 3: Writing random data...");
+//   if (!OverwriteWithRandom(fd, device_size, 3, "DoD Pass 3: Writing random data...")) {
+//     SendProgressUpdate(3, 0, g_wiping_active ? "Error in Pass 3" : "Wiping cancelled");
+//     close(fd);
+//     g_wiping_active = false;
+//     return;
+//   }
+//   SendProgressUpdate(3, 100, "Pass 3 completed: Random data written");
+
+//   fsync(fd);
+//   close(fd);
+
+//   if (g_wiping_active) SendProgressUpdate(4, 100, "DoD 5220.22-M wipe completed successfully!");
+
+//   g_wiping_active = false;
+//   SendProgressUpdate(4, 0, "Recreating filesystem...");
+//   CreateNewFileSystem(device_path);
+//   SendProgressUpdate(6, 100, "DoD wipe + NTFS rebuild complete.");
+//   auto end_time = std::chrono::steady_clock::now();
+//   auto end_epoch = std::time(nullptr);
+//   auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
+
+//   Log("==========================================");
+//   Log("Wipe Finished at (epoch): %lld", (long long)end_epoch);
+//   Log("Total Time Taken: %lld seconds", (long long)elapsed);
+//   Log("==========================================");
+
+// }
 static void PerformDoD522022MWipe(const std::string& device_path) {
   g_wiping_active = true;
+
+  // -------- TIME START --------
+  auto start_time = std::chrono::steady_clock::now();
+  auto start_epoch = std::time(nullptr);
+  Log("==========================================");
+  Log("Wipe Started at (epoch): %lld", (long long)start_epoch);
+  Log("==========================================");
+  // ------------------------------
+
   char dbg[256];
   snprintf(dbg, sizeof(dbg), "Received device path: '%s'", device_path.c_str());
   SendProgressUpdate(0, 0, dbg);
@@ -460,16 +614,110 @@ static void PerformDoD522022MWipe(const std::string& device_path) {
   fsync(fd);
   close(fd);
 
-  if (g_wiping_active) SendProgressUpdate(4, 100, "DoD 5220.22-M wipe completed successfully!");
+  if (g_wiping_active)
+    SendProgressUpdate(4, 100, "DoD 5220.22-M wipe completed successfully!");
 
   g_wiping_active = false;
   SendProgressUpdate(4, 0, "Recreating filesystem...");
   CreateNewFileSystem(device_path);
   SendProgressUpdate(6, 100, "DoD wipe + NTFS rebuild complete.");
+
+  // -------- TIME END --------
+  auto end_time = std::chrono::steady_clock::now();
+  auto end_epoch = std::time(nullptr);
+  auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
+
+  Log("==========================================");
+  Log("Wipe Finished at (epoch): %lld", (long long)end_epoch);
+  Log("Total Time Taken: %lld seconds", (long long)elapsed);
+  Log("==========================================");
+  // -------------------------------------------
 }
 
+// static void PerformNISTClear(const std::string& device_path) {
+//   g_wiping_active = true;
+//   auto start_time = std::chrono::steady_clock::now();
+//   auto start_epoch = std::time(nullptr);
+//   Log("==========================================");
+//   Log("Wipe Started at (epoch): %lld", (long long)start_epoch);
+//   Log("==========================================");
+
+//   SendProgressUpdate(0, 0, "Starting NIST SP 800-88 CLEAR...");
+
+//   uint64_t device_size = GetDiskSize(device_path);
+//   if (device_size == 0) {
+//     SendProgressUpdate(0, 0, "ERROR: Unable to read device size.");
+//     g_wiping_active = false;
+//     return;
+//   }
+
+//   int fd = open(device_path.c_str(), O_WRONLY);
+//   if (fd < 0) {
+//     SendProgressUpdate(0, 0, std::string("ERROR opening device: ") + strerror(errno));
+//     g_wiping_active = false;
+//     return;
+//   }
+
+//   SendProgressUpdate(1, 0, "NIST Clear Pass: Writing zeros...");
+//   if (!OverwriteWithZeros(fd, device_size, 1, "NIST: Zero-fill pass...")) {
+//     SendProgressUpdate(1, 0, "ERROR: Zero-fill failed.");
+//     close(fd);
+//     g_wiping_active = false;
+//     return;
+//   }
+//   SendProgressUpdate(1, 100, "Zero-fill complete.");
+//   fsync(fd);
+//   close(fd);
+
+//   SendProgressUpdate(4, 30, "Wiping partition metadata...");
+//   fd = open(device_path.c_str(), O_WRONLY);
+//   if (fd >= 0) {
+//     const size_t md = 1024 * 1024;
+//     std::vector<char> z(md, 0);
+//     lseek(fd, 0, SEEK_SET);
+//     write(fd, z.data(), md);
+//     fsync(fd);
+//     if (device_size > md) {
+//       lseek(fd, device_size - md, SEEK_SET);
+//       write(fd, z.data(), md);
+//       fsync(fd);
+//     }
+//     close(fd);
+//   }
+//   SendProgressUpdate(4, 60, "Metadata wiped.");
+
+//   SendProgressUpdate(4, 80, "Reloading partition table...");
+//   RunCmdQuiet(std::string("sudo partprobe ") + device_path);
+
+//   SendProgressUpdate(5, 0, "Recreating filesystem...");
+//   if (CreateNewFileSystem(device_path)) {
+//     SendProgressUpdate(6, 100, "NIST CLEAR completed successfully!");
+//   } else {
+//     SendProgressUpdate(6, 0, "NIST CLEAR complete, but filesystem creation failed.");
+//   }
+
+//   g_wiping_active = false;
+//   auto end_time = std::chrono::steady_clock::now();
+//   auto end_epoch = std::time(nullptr);
+//   auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
+
+//   Log("==========================================");
+//   Log("Wipe Finished at (epoch): %lld", (long long)end_epoch);
+//   Log("Total Time Taken: %lld seconds", (long long)elapsed);
+//   Log("==========================================");
+
+// }
 static void PerformNISTClear(const std::string& device_path) {
   g_wiping_active = true;
+
+  // -------- TIME START --------
+  auto start_time = std::chrono::steady_clock::now();
+  auto start_epoch = std::time(nullptr);
+  Log("==========================================");
+  Log("Wipe Started at (epoch): %lld", (long long)start_epoch);
+  Log("==========================================");
+  // ------------------------------------------
+
   SendProgressUpdate(0, 0, "Starting NIST SP 800-88 CLEAR...");
 
   uint64_t device_size = GetDiskSize(device_path);
@@ -486,6 +734,7 @@ static void PerformNISTClear(const std::string& device_path) {
     return;
   }
 
+  // ----------- NIST ZERO PASS -----------
   SendProgressUpdate(1, 0, "NIST Clear Pass: Writing zeros...");
   if (!OverwriteWithZeros(fd, device_size, 1, "NIST: Zero-fill pass...")) {
     SendProgressUpdate(1, 0, "ERROR: Zero-fill failed.");
@@ -496,40 +745,127 @@ static void PerformNISTClear(const std::string& device_path) {
   SendProgressUpdate(1, 100, "Zero-fill complete.");
   fsync(fd);
   close(fd);
+  // ---------------------------------------
 
+  // ----------- METADATA CLEAR -----------
   SendProgressUpdate(4, 30, "Wiping partition metadata...");
   fd = open(device_path.c_str(), O_WRONLY);
   if (fd >= 0) {
     const size_t md = 1024 * 1024;
     std::vector<char> z(md, 0);
+
     lseek(fd, 0, SEEK_SET);
     write(fd, z.data(), md);
     fsync(fd);
+
     if (device_size > md) {
       lseek(fd, device_size - md, SEEK_SET);
       write(fd, z.data(), md);
       fsync(fd);
     }
+
     close(fd);
   }
   SendProgressUpdate(4, 60, "Metadata wiped.");
+  // ---------------------------------------
 
+  // ----------- PARTITION TABLE RELOAD -----------
   SendProgressUpdate(4, 80, "Reloading partition table...");
   RunCmdQuiet(std::string("sudo partprobe ") + device_path);
+  // ----------------------------------------------
 
+  // ----------- FILESYSTEM CREATION -----------
   SendProgressUpdate(5, 0, "Recreating filesystem...");
   if (CreateNewFileSystem(device_path)) {
     SendProgressUpdate(6, 100, "NIST CLEAR completed successfully!");
   } else {
     SendProgressUpdate(6, 0, "NIST CLEAR complete, but filesystem creation failed.");
   }
+  // -------------------------------------------
 
   g_wiping_active = false;
+
+  // -------- TIME END --------
+  auto end_time = std::chrono::steady_clock::now();
+  auto end_epoch = std::time(nullptr);
+  auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
+
+  Log("==========================================");
+  Log("Wipe Finished at (epoch): %lld", (long long)end_epoch);
+  Log("Total Time Taken: %lld seconds", (long long)elapsed);
+  Log("==========================================");
+  // -------------------------------------------
 }
 
+
 // Gutmann (simplified 4-pass)
+// static void PerformGutmannWipe(const std::string& device_path) {
+//   g_wiping_active = true;
+//   auto start_time = std::chrono::steady_clock::now();
+//   auto start_epoch = std::time(nullptr);
+//   Log("==========================================");
+//   Log("Wipe Started at (epoch): %lld", (long long)start_epoch);
+//   Log("==========================================");
+
+//   SendProgressUpdate(10, 0, "Starting Gutmann Method...");
+
+//   uint64_t size = GetDiskSize(device_path);
+//   if (size == 0) {
+//     SendProgressUpdate(10, 0, "ERROR: Unable to read disk size");
+//     g_wiping_active = false;
+//     return;
+//   }
+
+//   int fd = open(device_path.c_str(), O_WRONLY);
+//   if (fd < 0) {
+//     SendProgressUpdate(10, 0, "ERROR opening device");
+//     g_wiping_active = false;
+//     return;
+//   }
+
+//   SendProgressUpdate(10, 0, "Gutmann Pass 1: Random");
+//   if (!OverwriteRandomGutmann(fd, size, 10)) { close(fd); g_wiping_active = false; return; }
+//   SendProgressUpdate(10, 100, "Gutmann Pass 1 complete");
+
+//   SendProgressUpdate(11, 0, "Gutmann Pass 2: 0x55");
+//   if (!OverwritePattern(fd, size, 0x55, 11, "Gutmann Pass 2: 0x55")) { close(fd); g_wiping_active = false; return; }
+//   SendProgressUpdate(11, 100, "Gutmann Pass 2 complete");
+
+//   SendProgressUpdate(12, 0, "Gutmann Pass 3: 0xAA");
+//   if (!OverwritePattern(fd, size, 0xAA, 12, "Gutmann Pass 3: 0xAA")) { close(fd); g_wiping_active = false; return; }
+//   SendProgressUpdate(12, 100, "Gutmann Pass 3 complete");
+
+//   SendProgressUpdate(13, 0, "Gutmann Pass 4: Random");
+//   if (!OverwriteRandomGutmann(fd, size, 13)) { close(fd); g_wiping_active = false; return; }
+//   SendProgressUpdate(13, 100, "Gutmann Pass 4 complete");
+
+//   close(fd);
+
+//   SendProgressUpdate(13, 0, "Creating NTFS filesystem...");
+//   CreateNewFileSystem(device_path);
+//   SendProgressUpdate(13, 100, "Gutmann wipe complete.");
+//   g_wiping_active = false;
+//   auto end_time = std::chrono::steady_clock::now();
+//   auto end_epoch = std::time(nullptr);
+//   auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
+
+//   Log("==========================================");
+//   Log("Wipe Finished at (epoch): %lld", (long long)end_epoch);
+//   Log("Total Time Taken: %lld seconds", (long long)elapsed);
+//   Log("==========================================");
+
+// }
 static void PerformGutmannWipe(const std::string& device_path) {
   g_wiping_active = true;
+
+  // -------- TIME START --------
+  auto start_time = std::chrono::steady_clock::now();
+  auto start_epoch = std::time(nullptr);
+  Log("==========================================");
+  Log("Wipe Started at (epoch): %lld", (long long)start_epoch);
+  Log("==========================================");
+  // ------------------------------------------
+
   SendProgressUpdate(10, 0, "Starting Gutmann Method...");
 
   uint64_t size = GetDiskSize(device_path);
@@ -546,33 +882,123 @@ static void PerformGutmannWipe(const std::string& device_path) {
     return;
   }
 
+  // ----------- PASS 1 RANDOM -----------
   SendProgressUpdate(10, 0, "Gutmann Pass 1: Random");
-  if (!OverwriteRandomGutmann(fd, size, 10)) { close(fd); g_wiping_active = false; return; }
+  if (!OverwriteRandomGutmann(fd, size, 10)) {
+    close(fd);
+    g_wiping_active = false;
+    return;
+  }
   SendProgressUpdate(10, 100, "Gutmann Pass 1 complete");
 
+  // ----------- PASS 2 — PATTERN 0x55 -----------
   SendProgressUpdate(11, 0, "Gutmann Pass 2: 0x55");
-  if (!OverwritePattern(fd, size, 0x55, 11, "Gutmann Pass 2: 0x55")) { close(fd); g_wiping_active = false; return; }
+  if (!OverwritePattern(fd, size, 0x55, 11, "Gutmann Pass 2: 0x55")) {
+    close(fd);
+    g_wiping_active = false;
+    return;
+  }
   SendProgressUpdate(11, 100, "Gutmann Pass 2 complete");
 
+  // ----------- PASS 3 — PATTERN 0xAA -----------
   SendProgressUpdate(12, 0, "Gutmann Pass 3: 0xAA");
-  if (!OverwritePattern(fd, size, 0xAA, 12, "Gutmann Pass 3: 0xAA")) { close(fd); g_wiping_active = false; return; }
+  if (!OverwritePattern(fd, size, 0xAA, 12, "Gutmann Pass 3: 0xAA")) {
+    close(fd);
+    g_wiping_active = false;
+    return;
+  }
   SendProgressUpdate(12, 100, "Gutmann Pass 3 complete");
 
+  // ----------- PASS 4 — RANDOM -----------
   SendProgressUpdate(13, 0, "Gutmann Pass 4: Random");
-  if (!OverwriteRandomGutmann(fd, size, 13)) { close(fd); g_wiping_active = false; return; }
+  if (!OverwriteRandomGutmann(fd, size, 13)) {
+    close(fd);
+    g_wiping_active = false;
+    return;
+  }
   SendProgressUpdate(13, 100, "Gutmann Pass 4 complete");
 
   close(fd);
 
+  // ----------- NTFS CREATE -----------
   SendProgressUpdate(13, 0, "Creating NTFS filesystem...");
   CreateNewFileSystem(device_path);
   SendProgressUpdate(13, 100, "Gutmann wipe complete.");
+  // -----------------------------------
+
   g_wiping_active = false;
+
+  // -------- TIME END --------
+  auto end_time = std::chrono::steady_clock::now();
+  auto end_epoch = std::time(nullptr);
+  auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
+
+  Log("==========================================");
+  Log("Wipe Finished at (epoch): %lld", (long long)end_epoch);
+  Log("Total Time Taken: %lld seconds", (long long)elapsed);
+  Log("==========================================");
+  // -------------------------------------------
 }
 
-// Single Pass Zero
+// // Single Pass Zero
+// static void PerformSinglePassZero(const std::string& device_path) {
+//   g_wiping_active = true;
+//   auto start_time = std::chrono::steady_clock::now();
+//   auto start_epoch = std::time(nullptr);
+//   Log("==========================================");
+//   Log("Wipe Started at (epoch): %lld", (long long)start_epoch);
+//   Log("==========================================");
+
+//   SendProgressUpdate(20, 0, "Starting Single Pass Zero...");
+
+//   uint64_t size = GetDiskSize(device_path);
+//   if (size == 0) {
+//     SendProgressUpdate(20, 0, "ERROR: Unable to read disk size");
+//     g_wiping_active = false;
+//     return;
+//   }
+
+//   int fd = open(device_path.c_str(), O_WRONLY);
+//   if (fd < 0) {
+//     SendProgressUpdate(20, 0, "ERROR opening device");
+//     g_wiping_active = false;
+//     return;
+//   }
+
+//   SendProgressUpdate(20, 0, "Single Pass: Writing zeros...");
+//   if (!OverwriteWithZeros(fd, size, 20, "Single Pass: Writing zeros...")) { close(fd); g_wiping_active = false; return; }
+//   SendProgressUpdate(20, 100, "Zero-fill complete");
+//   close(fd);
+
+//   SendProgressUpdate(21, 20, "Wiping metadata...");
+//   RunCmdQuiet("sudo dd if=/dev/zero of=" + device_path + " bs=1M count=1");
+//   SendProgressUpdate(21, 100, "Metadata wiped");
+
+//   SendProgressUpdate(22, 0, "Creating filesystem...");
+//   CreateNewFileSystem(device_path);
+//   SendProgressUpdate(22, 100, "Single pass zero complete.");
+//   g_wiping_active = false;
+//   auto end_time = std::chrono::steady_clock::now();
+//   auto end_epoch = std::time(nullptr);
+//   auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
+
+//   Log("==========================================");
+//   Log("Wipe Finished at (epoch): %lld", (long long)end_epoch);
+//   Log("Total Time Taken: %lld seconds", (long long)elapsed);
+//   Log("==========================================");
+
+// }
 static void PerformSinglePassZero(const std::string& device_path) {
   g_wiping_active = true;
+
+  // -------- TIME START --------
+  auto start_time = std::chrono::steady_clock::now();
+  auto start_epoch = std::time(nullptr);
+  Log("==========================================");
+  Log("Wipe Started at (epoch): %lld", (long long)start_epoch);
+  Log("==========================================");
+  // ------------------------------------------
+
   SendProgressUpdate(20, 0, "Starting Single Pass Zero...");
 
   uint64_t size = GetDiskSize(device_path);
@@ -589,20 +1015,43 @@ static void PerformSinglePassZero(const std::string& device_path) {
     return;
   }
 
+  // ----------- SINGLE PASS ZERO -----------
   SendProgressUpdate(20, 0, "Single Pass: Writing zeros...");
-  if (!OverwriteWithZeros(fd, size, 20, "Single Pass: Writing zeros...")) { close(fd); g_wiping_active = false; return; }
+  if (!OverwriteWithZeros(fd, size, 20, "Single Pass: Writing zeros...")) {
+    close(fd);
+    g_wiping_active = false;
+    return;
+  }
   SendProgressUpdate(20, 100, "Zero-fill complete");
   close(fd);
+  // -----------------------------------------
 
+  // ----------- METADATA WIPE -----------
   SendProgressUpdate(21, 20, "Wiping metadata...");
   RunCmdQuiet("sudo dd if=/dev/zero of=" + device_path + " bs=1M count=1");
   SendProgressUpdate(21, 100, "Metadata wiped");
+  // --------------------------------------
 
+  // ----------- FILESYSTEM CREATION -----------
   SendProgressUpdate(22, 0, "Creating filesystem...");
   CreateNewFileSystem(device_path);
   SendProgressUpdate(22, 100, "Single pass zero complete.");
+  // -------------------------------------------
+
   g_wiping_active = false;
+
+  // -------- TIME END --------
+  auto end_time = std::chrono::steady_clock::now();
+  auto end_epoch = std::time(nullptr);
+  auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time).count();
+
+  Log("==========================================");
+  Log("Wipe Finished at (epoch): %lld", (long long)end_epoch);
+  Log("Total Time Taken: %lld seconds", (long long)elapsed);
+  Log("==========================================");
+  // -------------------------------------------
 }
+
 
 // -------------------- Combined entrypoint with safety --------------------
 static void CompletelyWipeDisk(const std::string& device_path, const std::string& mode) {

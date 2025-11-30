@@ -70,5 +70,6 @@
         "typeindex": "cpp",
         "typeinfo": "cpp",
         "variant": "cpp"
-    }
+    },
+    "cmake.sourceDirectory": "/home/darshan/Documents/SIH/CODE_WIPE/linux"
 }
