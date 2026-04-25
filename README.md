@@ -22,18 +22,7 @@ A Flutter application designed to help users efficiently manage and wipe unwante
 
 ---
 
-## 📂 Project Structure
 
-```
-lib/
- ├── main.dart
- ├── screens/
- ├── widgets/
- ├── services/
- └── utils/
-```
-
----
 
 ## ▶️ Getting Started
 
